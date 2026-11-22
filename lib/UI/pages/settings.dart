@@ -1,8 +1,11 @@
 // (c) 2020-2021 Dian Iliev (Tuntorius)
 // This code is licensed under MIT license (see LICENSE.md for details)
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:mighty_plug_manager/UI/popups/alertDialogs.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -12,6 +15,7 @@ import '../../bluetooth/bleMidiHandler.dart';
 import '../../bluetooth/ble_controllers/BLEController.dart';
 import '../../bluetooth/devices/NuxDevice.dart';
 import '../../bluetooth/devices/features/tuner.dart';
+import '../../bluetooth/devices/presets/ai_json_bridge.dart';
 import '../../platform/simpleSharedPrefs.dart';
 import '../mightierIcons.dart';
 import '../widgets/deviceList.dart';
@@ -66,6 +70,43 @@ class _SettingsState extends State<Settings> {
 
   void _deviceChanged() {
     setState(() {});
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _copyDeviceSchema() async {
+    final String jsonStr = AiJsonBridge.exportDeviceSchema();
+    await Clipboard.setData(ClipboardData(text: jsonStr));
+    _showMessage("Device schema copied to clipboard");
+  }
+
+  Future<void> _copyCurrentPreset() async {
+    final String jsonStr = AiJsonBridge.exportCurrentPreset();
+    await Clipboard.setData(ClipboardData(text: jsonStr));
+    _showMessage("Current preset copied to clipboard");
+  }
+
+  Future<void> _importPresetFromClipboard() async {
+    final ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
+    final String? text = data?.text;
+    if (text == null || text.trim().isEmpty) {
+      _showMessage("Clipboard is empty");
+      return;
+    }
+    try {
+      final String name = AiJsonBridge.importPresetFromJson(text);
+      setState(() {});
+      _showMessage("Imported: $name (category: Imports)");
+    } on FormatException catch (e) {
+      _showMessage("Import failed: ${e.message}");
+    } on Exception catch (e) {
+      _showMessage("Import failed: $e");
+    }
   }
 
   @override
@@ -301,6 +342,32 @@ class _SettingsState extends State<Settings> {
                 });
               },
             ),
+          const Divider(),
+          const ListTile(
+            title: Text("AI JSON Bridge"),
+            subtitle: Text("Copy JSON to share with an AI, paste its preset back"),
+          ),
+          ListTile(
+            leading: const Icon(Icons.description_outlined),
+            title: const Text("Copy Device Schema (JSON)"),
+            onTap: () {
+              unawaited(_copyDeviceSchema());
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.copy_all_outlined),
+            title: const Text("Copy Current Preset (JSON)"),
+            onTap: () {
+              unawaited(_copyCurrentPreset());
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.content_paste_go),
+            title: const Text("Import Preset from Clipboard"),
+            onTap: () {
+              unawaited(_importPresetFromClipboard());
+            },
+          ),
           const Divider(),
           ListTile(
             title: const Text("Advanced Settings"),

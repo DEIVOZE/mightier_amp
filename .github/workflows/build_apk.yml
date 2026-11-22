@@ -1,0 +1,127 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Flutter analyze
+        run: flutter analyze
+
+      # The keystore is generated once and committed as base64 so that every
+      # subsequent build is signed with the same (stable) key.
+      - name: Prepare persistent signing key
+        id: keystore
+        shell: bash
+        run: |
+          if [ -f keystore.b64 ]; then
+            echo "Existing keystore.b64 found."
+            echo "KEY_SAVED=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Generating new keystore..."
+          keytool -genkeypair \
+            -keystore mightier.keystore \
+            -storetype PKCS12 \
+            -alias mightier \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass mightieramp \
+            -keypass mightieramp \
+            -dname "CN=Mightier Amp AI, OU=Release, O=Mightier Amp AI, L=NA, S=NA, C=NA"
+
+          base64 -w 0 mightier.keystore > keystore.b64
+          rm -f mightier.keystore
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add keystore.b64
+          git commit -m "chore: add persistent release keystore [skip ci]" || true
+          git push origin HEAD || true
+
+          echo "Keystore generated and saved. Next run will build a signed release."
+          echo "KEY_SAVED=1" >> "$GITHUB_OUTPUT"
+
+      - name: Restore keystore
+        if: steps.keystore.outputs.KEY_SAVED == '1'
+        shell: bash
+        run: base64 -d keystore.b64 > mightier.keystore
+
+      - name: Build release APK
+        if: steps.keystore.outputs.KEY_SAVED == '1'
+        shell: bash
+        run: |
+          flutter build apk \
+            --release \
+            --build-number=${{ github.run_number }}
+
+          UNSIGNED=build/app/outputs/flutter-apk/app-release.apk
+          ALIGNED=build/app/outputs/flutter-apk/app-release-aligned.apk
+          OUT=build/app/outputs/flutter-apk/MightierAmp-AI.apk
+
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+
+          "$ZIPALIGN" -p -f 4 "$UNSIGNED" "$ALIGNED"
+
+          "$APKSIGNER" sign \
+            --ks mightier.keystore \
+            --ks-key-alias mightier \
+            --ks-pass pass:mightieramp \
+            --key-pass pass:mightieramp \
+            --out "$OUT" \
+            "$ALIGNED"
+
+          "$APKSIGNER" verify --print-certs "$OUT"
+
+          echo "APK=$OUT" >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        if: steps.keystore.outputs.KEY_SAVED == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MightierAmp-AI-${{ github.run_number }}
+          path: ${{ env.APK }}
+          if-no-files-found: error
+
+      - name: Publish release
+        if: steps.keystore.outputs.KEY_SAVED == '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Mightier Amp AI build ${{ github.run_number }}
+          files: ${{ env.APK }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

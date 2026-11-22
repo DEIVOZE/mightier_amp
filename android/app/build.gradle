@@ -51,7 +51,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.tuntori.mightieramp"
+        applicationId "com.tuntori.mightieramp.ai"
         minSdkVersion flutter.minSdkVersion
         targetSdkVersion 34
         versionCode flutterVersionCode.toInteger()

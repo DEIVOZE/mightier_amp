@@ -77,10 +77,17 @@ jobs:
           echo "Keystore generated and saved."
           echo "KEY_SAVED=1" >> "$GITHUB_OUTPUT"
 
-      - name: Restore keystore
+      - name: Restore keystore and configure Gradle signing
         if: steps.keystore.outputs.KEY_SAVED == '1'
         shell: bash
-        run: base64 -d keystore.b64 > mightier.keystore
+        run: |
+          base64 -d keystore.b64 > android/app/mightier.keystore
+          cat << 'EOF' > android/key.properties
+          storePassword=mightieramp
+          keyPassword=mightieramp
+          keyAlias=mightier
+          storeFile=mightier.keystore
+          EOF
 
       - name: Build release APK
         if: steps.keystore.outputs.KEY_SAVED == '1'
@@ -90,25 +97,12 @@ jobs:
             --release \
             --build-number=${{ github.run_number }}
 
-          UNSIGNED=build/app/outputs/flutter-apk/app-release.apk
-          ALIGNED=build/app/outputs/flutter-apk/app-release-aligned.apk
+          SIGNED=build/app/outputs/flutter-apk/app-release.apk
           OUT=build/app/outputs/flutter-apk/MightierAmp-AI.apk
+          cp "$SIGNED" "$OUT"
 
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          ZIPALIGN="$BUILD_TOOLS/zipalign"
-          APKSIGNER="$BUILD_TOOLS/apksigner"
-
-          "$ZIPALIGN" -p -f 4 "$UNSIGNED" "$ALIGNED"
-
-          "$APKSIGNER" sign \
-            --ks mightier.keystore \
-            --ks-key-alias mightier \
-            --ks-pass pass:mightieramp \
-            --key-pass pass:mightieramp \
-            --out "$OUT" \
-            "$ALIGNED"
-
-          "$APKSIGNER" verify --print-certs "$OUT"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$OUT"
 
           echo "APK=$OUT" >> "$GITHUB_ENV"
 

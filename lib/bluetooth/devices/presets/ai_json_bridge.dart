@@ -107,8 +107,14 @@ class AiJsonBridge {
     return const JsonEncoder.withIndent('  ').convert(result);
   }
 
-  /// Parses [rawJson], merges it over the current preset template, saves it to
-  /// [PresetsStorage] and applies it to the device. Returns the saved name.
+  /// Applies [rawJson] to the currently active preset, saves the result to
+  /// [PresetsStorage] and sends it to the device. Returns the saved name.
+  ///
+  /// The import drives the live [Preset] object (slot effects, parameters,
+  /// volume) and then serializes it back with `device.presetToJson()`, instead
+  /// of patching a JSON snapshot: that keeps `fx_type`, the parameter handles
+  /// and the `inactiveEffects` list consistent with what `presetFromJson`
+  /// expects to read back.
   static String importPresetFromJson(String rawJson) {
     final Map<String, dynamic> input = _parseJson(rawJson);
 
@@ -118,51 +124,59 @@ class AiJsonBridge {
     final String name = _resolveName(input['name']);
     final String category = _resolveCategory(input['category']);
 
-    final Map<String, dynamic> internalJson = device.presetToJson();
-
-    final dynamic volumeInput = input['volume'];
-    if (volumeInput is num) {
-      internalJson['volume'] = volumeInput.toDouble().clamp(0.0, 100.0);
-    }
-
     final Map<String, dynamic> inputSlots = _slotMap(input['slots']);
     final int chainLength = device.effectsChainLength;
 
     for (int slot = 0; slot < chainLength; slot++) {
-      final ProcessorInfo info = device.processorList[slot];
-      final String keyName = info.keyName;
+      final String keyName = device.processorList[slot].keyName;
 
-      final dynamic slotInput = inputSlots[keyName];
-      if (slotInput is! Map) continue;
-
-      final Map slotData = slotInput;
-      final Map<String, dynamic>? targetSlot =
-          _asStringMap(internalJson[keyName]);
-      if (targetSlot == null) continue;
+      final dynamic rawSlot = inputSlots[keyName];
+      if (rawSlot is! Map) continue;
+      final Map slotData = rawSlot;
 
       final dynamic enabledInput = slotData['enabled'];
-      targetSlot['enabled'] = enabledInput is bool ? enabledInput : true;
+      preset.setSlotEnabled(
+        slot,
+        enabledInput is bool ? enabledInput : true,
+        false,
+      );
 
       final dynamic modelInput = slotData['model'];
-      if (modelInput is String) {
-        final String modelName = _normalize(modelInput);
-        final List<Processor> slotEffects = preset.getEffectsForSlot(slot);
+      if (modelInput is! String) continue;
 
-        Processor? selected;
-        for (final Processor proc in slotEffects) {
-          if (proc.isSeparator) continue;
-          if (_normalize(proc.name) == modelName) {
-            selected = proc;
-            break;
-          }
-        }
+      final String modelName = _normalize(modelInput);
+      if (modelName.isEmpty) continue;
 
-        if (selected != null) {
-          targetSlot['fx_type'] = selected.nuxIndex;
-          _applyParams(targetSlot, selected, slotData['params']);
+      final List<Processor> effects = preset.getEffectsForSlot(slot);
+
+      int effectIndex = -1;
+      for (int i = 0; i < effects.length; i++) {
+        final Processor proc = effects[i];
+        if (proc.isSeparator) continue;
+        if (_normalize(proc.name) == modelName) {
+          effectIndex = i;
+          break;
         }
       }
+      if (effectIndex < 0) continue;
+
+      preset.setSelectedEffectForSlot(slot, effectIndex, false);
+
+      _applyParams(
+        preset,
+        effects[effectIndex],
+        slotData['params'],
+      );
     }
+
+    final dynamic volumeInput = input['volume'];
+    if (volumeInput is num) {
+      preset.setVolume(volumeInput.toDouble().clamp(0.0, 100.0), false);
+    }
+
+    // Serialize the preset we just configured, then save and push it.
+    final Map<String, dynamic> internalJson =
+        device.presetToJson(customPreset: preset);
 
     final String uuid = PresetsStorage().savePreset(
       internalJson,
@@ -247,11 +261,11 @@ class AiJsonBridge {
 
   static String _normalize(String value) => value.toLowerCase().trim();
 
-  /// Applies parameter values from [paramsInput] to [targetSlot] for [effect].
+  /// Applies parameter values from [paramsInput] to [effect] on [preset].
   /// Values are matched either by parameter [Parameter.name] (case-insensitive)
   /// or by [Parameter.handle], then clamped to the formatter range.
   static void _applyParams(
-    Map<String, dynamic> targetSlot,
+    Preset preset,
     Processor effect,
     dynamic paramsInput,
   ) {
@@ -284,7 +298,7 @@ class AiJsonBridge {
 
       final double min = param.formatter.min.toDouble();
       final double max = param.formatter.max.toDouble();
-      targetSlot[param.handle] = numeric.clamp(min, max);
+      preset.setParameterValue(param, numeric.clamp(min, max), false);
     }
   }
 

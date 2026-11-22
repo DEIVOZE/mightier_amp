@@ -251,14 +251,6 @@ class AiJsonBridge {
     return result;
   }
 
-  static Map<String, dynamic>? _asStringMap(dynamic value) {
-    if (value is Map) {
-      return value.map((dynamic key, dynamic v) =>
-          MapEntry<String, dynamic>(key.toString(), v));
-    }
-    return null;
-  }
-
   static String _normalize(String value) => value.toLowerCase().trim();
 
   /// Applies parameter values from [paramsInput] to [effect] on [preset].
@@ -298,7 +290,7 @@ class AiJsonBridge {
 
       final double min = param.formatter.min.toDouble();
       final double max = param.formatter.max.toDouble();
-      preset.setParameterValue(param, numeric.clamp(min, max), false);
+      preset.setParameterValue(param, numeric.clamp(min, max), notify: false);
     }
   }
 

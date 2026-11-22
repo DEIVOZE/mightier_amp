@@ -34,11 +34,14 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      - name: Fix hardcoded Java path in gradle.properties
+        run: sed -i '/org.gradle.java.home/d' android/gradle.properties
+
       - name: Проверка анализатором
         run: flutter analyze --no-fatal-infos --no-fatal-warnings lib/bluetooth/devices/presets/ai_json_bridge.dart lib/UI/pages/settings.dart
 
-      # The keystore is generated once and committed as base64 so that every
-      # subsequent build is signed with the same (stable) key.
+      # Ключ генерируется один раз и сохраняется в base64, чтобы все
+      # последующие сборки подписывались одним и тем же ключом.
       - name: Prepare persistent signing key
         id: keystore
         shell: bash
@@ -67,10 +70,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add keystore.b64
-          git commit -m "chore: add persistent release keystore [skip ci]" || true
-          git push origin HEAD || true
+          git commit -m "chore: add persistent release keystore [skip ci]"
+          git push origin HEAD
 
-          echo "Keystore generated and saved. Next run will build a signed release."
+          echo "Keystore generated and saved."
           echo "KEY_SAVED=1" >> "$GITHUB_OUTPUT"
 
       - name: Restore keystore
